@@ -3,6 +3,7 @@ import time
 import board
 import busio
 import pulseio
+import audioio
 import displayio
 import neopixel
 from digitalio import DigitalInOut, Direction
@@ -102,6 +103,16 @@ class PyPortal:
     def neo_status(self, value):
         if self.neopix:
             self.neopix.fill(value)
+
+    def play_file(self, file_name):
+        #self._speaker_enable.value = True
+        with audioio.AudioOut(board.AUDIO_OUT) as audio:
+            with open(file_name, "rb") as f:
+                with audioio.WaveFile(f) as wavefile:
+                    audio.play(wavefile)
+                    while audio.playing:
+                        pass
+        #self._speaker_enable.value = False
 
     def fetch(self):
         gc.collect()
