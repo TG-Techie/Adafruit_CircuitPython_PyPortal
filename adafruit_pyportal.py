@@ -62,7 +62,7 @@ class PyPortal:
 
         requests.set_interface(self._esp)
 
-        self.splash = displayio.Group()
+        self.splash = displayio.Group(max_size=5)
         board.DISPLAY.show(self.splash)
         if default_bg:
             self._bg_file = open(default_bg, "rb")
@@ -76,6 +76,7 @@ class PyPortal:
             self._text = None
             self._text_color = text_color
             self._text_position = text_position
+            self._text_font.load_glyphs(b'PyPortal0123456789')
             self.set_text("PyPortal")
         else:
             self._text_font = None
