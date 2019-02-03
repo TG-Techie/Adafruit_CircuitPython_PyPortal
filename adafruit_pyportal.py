@@ -34,7 +34,14 @@ class PyPortal:
         self.set_backlight(1.0)  # turn off backlight
 
         self._url = url
-        self._json_path = json_path
+        if json_path:
+            if isinstance(json_path[0], tuple) or isinstance(json_path[0], list):
+                self._json_path = json_path
+            else:
+                self._json_path = (json_path,)
+        else:
+            self._json_path = None
+
         self._xml_path = xml_path
         self._time_between_requests = time_between_requests
         self._success_callback = success_callback
@@ -82,12 +89,22 @@ class PyPortal:
         #board.DISPLAY.backlight = True
 
         if text_font:
+            if isinstance(text_position[0], tuple) or isinstance(text_position[0], list):
+                num = len(text_position)
+            else:
+                num = 1
+                text_position = (text_position,)
+                text_color = (text_color,)
+            self._text = [None] * num
+            self._text_color = [None] * num
+            self._text_position = [None] * num
             self._text_font = bitmap_font.load_font(text_font)
-            self._text = None
-            self._text_color = text_color
-            self._text_position = text_position
-            self._text_font.load_glyphs(b'PyPortal0123456789')
-            self.set_text("PyPortal")
+            self._text_font.load_glyphs(b'PyPortal0123456789,.')
+            for i in range(num):
+                self._text[i] = None
+                self._text_color[i] = text_color[i]
+                self._text_position[i] = text_position[i]
+                self.set_text("PyPortal          ", index=i)
         else:
             self._text_font = None
             self._text = None
@@ -101,15 +118,18 @@ class PyPortal:
         val = max(0, min(1.0, val))
         self._backlight.duty_cycle = int(val * 65535)
 
-    def set_text(self, val):
+    def set_text(self, val, index=0):
         if self._text_font:
-            if self._text:
-                self.splash.pop()
-            self._text = TextArea(self._text_font, text=str(val))
-            self._text.color = self._text_color
-            self._text.x = self._text_position[0]
-            self._text.y = self._text_position[1]
-            self.splash.append(self._text.group)
+            if self._text[index]:
+                self._text[index]._update_text(str(val))
+                board.DISPLAY.refresh_soon()
+                board.DISPLAY.wait_for_frame()
+                return
+            self._text[index] = TextArea(self._text_font, text=str(val))
+            self._text[index].color = self._text_color[index]
+            self._text[index].x = self._text_position[index][0]
+            self._text[index].y = self._text_position[index][1]
+            self.splash.append(self._text[index].group)
             board.DISPLAY.wait_for_frame()
 
     def neo_status(self, value):
@@ -141,15 +161,27 @@ class PyPortal:
         self.neo_status((0, 0, 100))   # green = got data
         print("Reply is OK!")
 
-        value = None
+        values = []
         if self._json_path:
-            value = r.json()
-            for x in self._json_path:
-                value = value[x]
+            for path in self._json_path:
+                value = r.json()
+                for x in path:
+                    value = value[x]
+                values.append(value)
         else:
-            value = r.text()
+            values = r.text()
+        print(values)
         if self._success_callback:
-            self._success_callback(value)
+            self._success_callback(values)
         gc.collect()
-        self.set_text(value)
-        return value
+        for i in range(len(self._text)):
+            try:
+                integer = int(values[i])
+                string = "{:,d}".format(integer)
+                self.set_text(string, index=i)
+            except ValueError:
+                # ok its a string
+                self.set_text(values[i], index=i)
+        if len(values) == 1:
+            return values[0]
+        return values
