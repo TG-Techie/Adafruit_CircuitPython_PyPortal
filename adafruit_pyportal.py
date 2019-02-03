@@ -170,18 +170,16 @@ class PyPortal:
                 values.append(value)
         else:
             values = r.text()
-        print(values)
         if self._success_callback:
             self._success_callback(values)
         gc.collect()
-        for i in range(len(self._text)):
-            try:
-                integer = int(values[i])
-                string = "{:,d}".format(integer)
-                self.set_text(string, index=i)
-            except ValueError:
-                # ok its a string
-                self.set_text(values[i], index=i)
+        if self._text:
+            for i in range(len(self._text)):
+                try:
+                    self.set_text("{:,d}".format(int(values[i])), index=i)
+                except ValueError:
+                    # ok its a string
+                    self.set_text(values[i], index=i)
         if len(values) == 1:
             return values[0]
         return values
