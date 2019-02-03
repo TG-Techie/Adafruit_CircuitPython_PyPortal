@@ -6,6 +6,7 @@ import pulseio
 import audioio
 import displayio
 import neopixel
+import microcontroller
 from digitalio import DigitalInOut, Direction
 
 from adafruit_esp32spi import adafruit_esp32spi
@@ -26,6 +27,11 @@ class PyPortal:
                  text_font=None, text_position=None, text_color=0x808080,
                  time_between_requests=60, success_callback=None):
         #board.DISPLAY.brightness = 0
+        try:
+            self._backlight = pulseio.PWMOut(board.TFT_BACKLIGHT)
+        except:
+            pass
+        self.set_backlight(1.0)  # turn off backlight
 
         self._url = url
         self._json_path = json_path
@@ -40,10 +46,10 @@ class PyPortal:
         self.neo_status(0)
 
         # Make ESP32 connection
-        esp32_cs = DigitalInOut(board.ESP_CS)
-        esp32_ready = DigitalInOut(board.ESP_BUSY)
-        esp32_gpio0 = DigitalInOut(board.ESP_GPIO0)
-        esp32_reset = DigitalInOut(board.ESP_RESET)
+        esp32_cs = DigitalInOut(microcontroller.pin.PB14)
+        esp32_ready = DigitalInOut(microcontroller.pin.PB16)
+        esp32_gpio0 = DigitalInOut(microcontroller.pin.PB15)
+        esp32_reset = DigitalInOut(microcontroller.pin.PB17)
         spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
         self._esp = adafruit_esp32spi.ESP_SPIcontrol(spi, esp32_cs, esp32_ready, esp32_reset, esp32_gpio0)
 
@@ -52,6 +58,7 @@ class PyPortal:
                 print("ESP firmware:", self._esp.firmware_version)
                 break
             except RuntimeError:
+                print("Retrying ESP32 connection")
                 time.sleep(1)
                 self._esp.reset()
         else:
@@ -64,7 +71,11 @@ class PyPortal:
         if default_bg:
             self._bg_file = open(default_bg, "rb")
             background = displayio.OnDiskBitmap(self._bg_file)
-            self._bg_sprite = displayio.TileGrid(background, pixel_shader=displayio.ColorConverter(), position=(0,0))
+            try:
+                self._bg_sprite = displayio.TileGrid(background, pixel_shader=displayio.ColorConverter(), position=(0,0))
+            except:
+                self._bg_sprite = displayio.Sprite(background, pixel_shader=displayio.ColorConverter(), position=(0,0))
+
             self.splash.append(self._bg_sprite)
             board.DISPLAY.wait_for_frame()
 
@@ -80,6 +91,15 @@ class PyPortal:
         else:
             self._text_font = None
             self._text = None
+
+        self.set_backlight(1.0)  # turn on backlight
+
+
+    def set_backlight(self, val):
+        if not self._backlight:
+            return
+        val = max(0, min(1.0, val))
+        self._backlight.duty_cycle = int(val * 65535)
 
     def set_text(self, val):
         if self._text_font:
