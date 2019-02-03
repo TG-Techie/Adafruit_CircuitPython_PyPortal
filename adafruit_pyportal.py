@@ -22,13 +22,10 @@ except ImportError:
 
 class PyPortal:
     def __init__(self, *, url, json_path=None, xml_path=None,
-                 default_bg=None, backlight=None, status_neopixel=None,
+                 default_bg=None, status_neopixel=None,
                  text_font=None, text_position=None, text_color=0x808080,
                  time_between_requests=60, success_callback=None):
-        self._backlight = None
-        if backlight:
-            self._backlight = pulseio.PWMOut(backlight)
-        self.set_backlight(0)  # turn off backlight
+        #board.DISPLAY.brightness = 0
 
         self._url = url
         self._json_path = json_path
@@ -67,9 +64,11 @@ class PyPortal:
         if default_bg:
             self._bg_file = open(default_bg, "rb")
             background = displayio.OnDiskBitmap(self._bg_file)
-            self._bg_sprite = displayio.Sprite(background, pixel_shader=displayio.ColorConverter(), position=(0,0))
+            self._bg_sprite = displayio.TileGrid(background, pixel_shader=displayio.ColorConverter(), position=(0,0))
             self.splash.append(self._bg_sprite)
             board.DISPLAY.wait_for_frame()
+
+        #board.DISPLAY.backlight = True
 
         if text_font:
             self._text_font = bitmap_font.load_font(text_font)
@@ -82,8 +81,6 @@ class PyPortal:
             self._text_font = None
             self._text = None
 
-        self.set_backlight(1.0)  # turn on backlight
-
     def set_text(self, val):
         if self._text_font:
             if self._text:
@@ -94,12 +91,6 @@ class PyPortal:
             self._text.y = self._text_position[1]
             self.splash.append(self._text.group)
             board.DISPLAY.wait_for_frame()
-
-    def set_backlight(self, val):
-        if not self._backlight:
-            return
-        val = max(0, min(1.0, val))
-        self._backlight.duty_cycle = int(val * 65535)
 
     def neo_status(self, value):
         if self.neopix:
