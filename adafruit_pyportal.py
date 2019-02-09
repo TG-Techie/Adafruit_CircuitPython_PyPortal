@@ -1,3 +1,4 @@
+import os
 import gc
 import time
 import board
@@ -20,18 +21,23 @@ except ImportError:
     print("WiFi settings are kept in settings.py, please add them there!")
     raise
 
+IMAGE_CONVERTER_SERVICE = "https://res.cloudinary.com/schmarty/image/fetch/w_320,h_240,c_fill,f_bmp/"
 
 class PyPortal:
     def __init__(self, *, url, json_path=None, xml_path=None,
                  default_bg=None, status_neopixel=None,
-                 text_font=None, text_position=None, text_color=0x808080,
-                 time_between_requests=60, success_callback=None):
-        #board.DISPLAY.brightness = 0
+                 text_font=None, text_position=None, text_color=0x808080, text_wrap=0,
+                 image_json_path=None, image_resize=None, image_position=None,
+                 time_between_requests=60, success_callback=None,
+                 debug=False):
+
+        self._debug = debug
+
         try:
             self._backlight = pulseio.PWMOut(board.TFT_BACKLIGHT)
         except:
             pass
-        self.set_backlight(1.0)  # turn off backlight
+        self.set_backlight(1.0)  # turn on backlight
 
         self._url = url
         if json_path:
@@ -75,18 +81,10 @@ class PyPortal:
 
         self.splash = displayio.Group(max_size=5)
         board.DISPLAY.show(self.splash)
-        if default_bg:
-            self._bg_file = open(default_bg, "rb")
-            background = displayio.OnDiskBitmap(self._bg_file)
-            try:
-                self._bg_sprite = displayio.TileGrid(background, pixel_shader=displayio.ColorConverter(), position=(0,0))
-            except:
-                self._bg_sprite = displayio.Sprite(background, pixel_shader=displayio.ColorConverter(), position=(0,0))
-
-            self.splash.append(self._bg_sprite)
-            board.DISPLAY.wait_for_frame()
-
-        #board.DISPLAY.backlight = True
+        self._bg_group = displayio.Group(max_size=1)
+        self._bg_file = None
+        self.splash.append(self._bg_group)
+        self.set_background(default_bg)
 
         if text_font:
             if isinstance(text_position[0], tuple) or isinstance(text_position[0], list):
@@ -95,22 +93,56 @@ class PyPortal:
                 num = 1
                 text_position = (text_position,)
                 text_color = (text_color,)
+                text_wrap = (text_wrap,)
             self._text = [None] * num
             self._text_color = [None] * num
             self._text_position = [None] * num
+            self._text_wrap = [0] * num
             self._text_font = bitmap_font.load_font(text_font)
             self._text_font.load_glyphs(b'PyPortal0123456789,.')
             for i in range(num):
                 self._text[i] = None
                 self._text_color[i] = text_color[i]
                 self._text_position[i] = text_position[i]
-                self.set_text("PyPortal          ", index=i)
+                self._text_wrap[i] = text_wrap[i]
+                self.set_text("PyPortal                                                                   ", index=i)
         else:
             self._text_font = None
             self._text = None
 
+        self._image_json_path = image_json_path
+        self._image_resize = image_resize
+        self._image_position = image_position
+        if image_json_path:
+            if not self._image_position:
+                self._image_position = (0, 0)  # default to top corner
+            if not self._image_resize:
+                self._image_resize = (320, 240)  # default to full screen
+
         self.set_backlight(1.0)  # turn on backlight
 
+    def set_background(self, filename):
+        try:
+            self._bg_group.pop()
+        except IndexError:
+            pass # s'ok, we'll fix to test once we can
+
+        if not filename:
+            return # we're done, no background desired
+
+        print("Set background to ", filename)
+        if self._bg_file:
+            self._bg_file.close()
+        self._bg_file = open(filename, "rb")
+        background = displayio.OnDiskBitmap(self._bg_file)
+        try:
+            self._bg_sprite = displayio.TileGrid(background, pixel_shader=displayio.ColorConverter(), position=(0,0))
+        except:
+            self._bg_sprite = displayio.Sprite(background, pixel_shader=displayio.ColorConverter(), position=(0,0))
+
+        self._bg_group.append(self._bg_sprite)
+        board.DISPLAY.refresh_soon()
+        board.DISPLAY.wait_for_frame()
 
     def set_backlight(self, val):
         if not self._backlight:
@@ -146,6 +178,36 @@ class PyPortal:
                         pass
         #self._speaker_enable.value = False
 
+    def _json_pather(self, json, path):
+        value = json
+        for x in path:
+            value = value[x]
+        return value
+
+    def wget(self, url, filename):
+        print("Fetching stream from", url)
+        r = requests.get(url, stream=True)
+        #esp._debug = True
+
+        if self._debug:
+            print(r.headers)
+        content_length = int(r.headers['content-length'])
+        remaining = content_length
+        print("Saving data to ", filename)
+
+        with open(filename, "wb") as f:
+            for i in r.iter_content(min(remaining,1500)):
+                remaining -= len(i)
+                f.write(i)
+                if self._debug:
+                    print("Read %d bytes, %d remaining" % (content_length-remaining, remaining))
+                else:
+                    print(".", end='')
+                if not remaining:
+                    break
+        r.close()
+        print("Created file of %d bytes" % os.stat(filename)[6])
+
     def fetch(self):
         gc.collect()
 
@@ -161,30 +223,70 @@ class PyPortal:
         self.neo_status((0, 0, 100))   # green = got data
         print("Reply is OK!")
 
+        if self._debug:
+            print(r.text)
+
+        json_out = None
+        if self._image_json_path or self._json_path:
+            try:
+                json_out = r.json()
+            except ValueError:            # failed to parse?
+                print("Couldn't parse json: ", r.text)
+                raise
+
+        # extract desired text/values from json
         values = []
         if self._json_path:
             for path in self._json_path:
-                try:
-                    value = r.json()
-                except ValueError:
-                    # failed to parse?
-                    print("Couldn't parse json: ", r.text)
-                    raise
-                for x in path:
-                    value = value[x]
-                values.append(value)
+                values.append(self._json_pather(json_out, path))
         else:
             values = r.text()
+
+        image = None
+        if self._image_json_path:
+            image_url = self._json_pather(json_out, self._image_json_path)
+            print("original URL:", image_url)
+            image_url = IMAGE_CONVERTER_SERVICE+image_url
+            print("convert URL:", image_url)
+            # convert image to bitmap and cache
+            print("**not actually wgetting**")
+            #self.wget(image_url, "/cache.bmp")
+            self.set_background("/cache.bmp")
+
+        # if we have a callback registered, call it now
         if self._success_callback:
             self._success_callback(values)
+
         gc.collect()
+
+        # fill out all the text blocks
         if self._text:
             for i in range(len(self._text)):
+                string = None
                 try:
-                    self.set_text("{:,d}".format(int(values[i])), index=i)
+                    string = "{:,d}".format(int(values[i]))
                 except ValueError:
-                    # ok its a string
-                    self.set_text(values[i], index=i)
+                    string = values[i] # ok its a string
+                if self._text_wrap[i]:
+                    string = '\n'.join(self.wrap_nicely(string, self._text_wrap[i]))
+                self.set_text(string, index=i)
         if len(values) == 1:
             return values[0]
         return values
+
+
+
+    # return a list of lines with wordwrapping
+    def wrap_nicely(self, string, max_chars):
+        words = string.split(' ')
+        the_lines = []
+        the_line = ""
+        for w in words:
+            if len(the_line+' '+w) <= max_chars:
+                the_line += ' '+w
+            else:
+                the_lines.append(the_line)
+                the_line = ''+w
+        if the_line:      # last line remaining
+            the_lines.append(the_line)
+        return the_lines
