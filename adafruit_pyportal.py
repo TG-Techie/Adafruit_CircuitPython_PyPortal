@@ -164,7 +164,12 @@ class PyPortal:
         values = []
         if self._json_path:
             for path in self._json_path:
-                value = r.json()
+                try:
+                    value = r.json()
+                except ValueError:
+                    # failed to parse?
+                    print("Couldn't parse json: ", r.text)
+                    raise
                 for x in path:
                     value = value[x]
                 values.append(value)
