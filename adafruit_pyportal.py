@@ -9,6 +9,7 @@ import displayio
 import neopixel
 import microcontroller
 from digitalio import DigitalInOut, Direction
+import adafruit_touchscreen
 
 from adafruit_esp32spi import adafruit_esp32spi
 from adafruit_bitmap_font import bitmap_font
@@ -59,6 +60,8 @@ class PyPortal:
         self.neo_status(0)
 
         # Make ESP32 connection
+        if self._debug:
+            print("Init ESP32")
         esp32_cs = DigitalInOut(microcontroller.pin.PB14)
         esp32_ready = DigitalInOut(microcontroller.pin.PB16)
         esp32_gpio0 = DigitalInOut(microcontroller.pin.PB15)
@@ -79,10 +82,13 @@ class PyPortal:
 
         requests.set_interface(self._esp)
 
+        if self._debug:
+            print("Init display")
         self.splash = displayio.Group(max_size=5)
         board.DISPLAY.show(self.splash)
         self._bg_group = displayio.Group(max_size=1)
         self._bg_file = None
+        self._qr_group = None
         self.splash.append(self._bg_group)
         self.set_background(default_bg)
 
@@ -99,13 +105,16 @@ class PyPortal:
             self._text_position = [None] * num
             self._text_wrap = [0] * num
             self._text_font = bitmap_font.load_font(text_font)
-            self._text_font.load_glyphs(b'PyPortal0123456789,.')
+            if self._debug:
+                print("Loading font glyphs")
+            self._text_font.load_glyphs(b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789:/-_,. ')
             for i in range(num):
+                if self._debug:
+                    print("Init text area", i)
                 self._text[i] = None
                 self._text_color[i] = text_color[i]
                 self._text_position[i] = text_position[i]
                 self._text_wrap[i] = text_wrap[i]
-                self.set_text("PyPortal                                                                   ", index=i)
         else:
             self._text_font = None
             self._text = None
@@ -114,10 +123,19 @@ class PyPortal:
         self._image_resize = image_resize
         self._image_position = image_position
         if image_json_path:
+            if self._debug:
+                print("Init image path", i)
             if not self._image_position:
                 self._image_position = (0, 0)  # default to top corner
             if not self._image_resize:
                 self._image_resize = (320, 240)  # default to full screen
+
+        if self._debug:
+            print("Init touchscreen")
+        self.ts = adafruit_touchscreen.Touchscreen(microcontroller.pin.PB01, microcontroller.pin.PB08,
+                                                   microcontroller.pin.PA06, microcontroller.pin.PB00,
+                                                   calibration=((5200, 59000), (5800, 57000)),
+                                                   size=(320, 240))
 
         self.set_backlight(1.0)  # turn on backlight
 
@@ -129,7 +147,6 @@ class PyPortal:
 
         if not filename:
             return # we're done, no background desired
-
         print("Set background to ", filename)
         if self._bg_file:
             self._bg_file.close()
@@ -213,6 +230,8 @@ class PyPortal:
 
         self.neo_status((0, 0, 100))
         while not self._esp.is_connected:
+            if self._debug:
+                print("Connecting to AP")
             # settings dictionary must contain 'ssid' and 'password' at a minimum
             self.neo_status((100, 0, 0)) # red = not connected
             self._esp.connect(settings)
@@ -245,12 +264,14 @@ class PyPortal:
         image = None
         if self._image_json_path:
             image_url = self._json_pather(json_out, self._image_json_path)
+            # TERRIBLE HACK FOR FIXING MICROSERVICE
+            image_url = image_url.replace("https://cdn-shop.adafruit.com/320x240", "https://cdn-shop.adafruit.com/640x480")
             print("original URL:", image_url)
             image_url = IMAGE_CONVERTER_SERVICE+image_url
             print("convert URL:", image_url)
             # convert image to bitmap and cache
-            print("**not actually wgetting**")
-            #self.wget(image_url, "/cache.bmp")
+            #print("**not actually wgetting**")
+            self.wget(image_url, "/cache.bmp")
             self.set_background("/cache.bmp")
 
         # if we have a callback registered, call it now
@@ -267,14 +288,81 @@ class PyPortal:
                     string = "{:,d}".format(int(values[i]))
                 except ValueError:
                     string = values[i] # ok its a string
+                if self._debug:
+                    print("Drawing text", string)
                 if self._text_wrap[i]:
+                    if self._debug:
+                        print("Wrapping text")
                     string = '\n'.join(self.wrap_nicely(string, self._text_wrap[i]))
                 self.set_text(string, index=i)
         if len(values) == 1:
             return values[0]
         return values
 
+    def show_QR(self, qr_data, qr_size=128, position=None):
+        import adafruit_miniqr
 
+        if not qr_data: # delete it
+            if self._qr_group:
+                try:
+                    self._qr_group.pop()
+                except IndexError:
+                    pass
+                board.DISPLAY.refresh_soon()
+                board.DISPLAY.wait_for_frame()
+            return
+
+        if not position:
+            position=(0, 0)
+        if qr_size % 32 != 0:
+            raise RuntimeError("QR size must be divisible by 32")
+
+        qr = adafruit_miniqr.QRCode()
+        qr.add_data(qr_data)
+        qr.make()
+
+        # how big each pixel is, add 2 blocks on either side
+        BLOCK_SIZE = qr_size // (qr.matrix.width+4)
+        # Center the QR code in the middle
+        X_OFFSET = (qr_size - BLOCK_SIZE * qr.matrix.width) // 2
+        Y_OFFSET = (qr_size - BLOCK_SIZE * qr.matrix.height) // 2
+
+        # monochome (2 color) palette
+        palette = displayio.Palette(2)
+        palette[0] = 0xFFFFFF
+        palette[1] = 0x000000
+
+        # bitmap the size of the matrix + borders, monochrome (2 colors)
+        qr_bitmap = displayio.Bitmap(qr_size, qr_size, 2)
+
+        # raster the QR code
+        line = bytearray(qr_size // 8)  # monochrome means 8 pixels per byte
+        for y in range(qr.matrix.height):    # each scanline in the height
+            for i, _ in enumerate(line):    # initialize it to be empty
+                line[i] = 0
+            for x in range(qr.matrix.width):
+                if qr.matrix[x, y]:
+                    for b in range(BLOCK_SIZE):
+                        _x = X_OFFSET + x * BLOCK_SIZE + b
+                        line[_x // 8] |= 1 << (7-(_x % 8))
+
+            for b in range(BLOCK_SIZE):
+                # load this line of data in, as many time as block size
+                qr_bitmap._load_row(Y_OFFSET + y*BLOCK_SIZE+b, line) #pylint: disable=protected-access
+
+        # display the bitmap using our palette
+        qr_sprite = displayio.Sprite(qr_bitmap, pixel_shader=palette, position=position)
+        if self._qr_group:
+            try:
+                self._qr_group.pop()
+            except IndexError: # later test if empty
+                pass
+        else:
+            self._qr_group = displayio.Group()
+            self.splash.append(self._qr_group)
+        self._qr_group.append(qr_sprite)
+        board.DISPLAY.refresh_soon()
+        board.DISPLAY.wait_for_frame()
 
     # return a list of lines with wordwrapping
     def wrap_nicely(self, string, max_chars):
