@@ -23,6 +23,16 @@ except ImportError:
     raise
 
 IMAGE_CONVERTER_SERVICE = "https://res.cloudinary.com/schmarty/image/fetch/w_320,h_240,c_fill,f_bmp/"
+LOCALFILE = "local.txt"
+
+class fake_requests:
+    def __init__(self, filename):
+        self._filename=filename
+        with open(filename, "r")  as f:
+            self.text = f.read()
+    def json(self):
+        import ujson
+        return ujson.loads(self.text)
 
 class PyPortal:
     def __init__(self, *, url, json_path=None, xml_path=None,
@@ -30,6 +40,8 @@ class PyPortal:
                  text_font=None, text_position=None, text_color=0x808080, text_wrap=0,
                  image_json_path=None, image_resize=None, image_position=None,
                  time_between_requests=60, success_callback=None,
+                 caption_text=None, caption_font=None, caption_position=None,
+                 caption_color=0x808080,
                  debug=True):
 
         self._debug = debug
@@ -86,11 +98,23 @@ class PyPortal:
             print("Init display")
         self.splash = displayio.Group(max_size=5)
         board.DISPLAY.show(self.splash)
+
+        if self._debug:
+            print("Init background")
         self._bg_group = displayio.Group(max_size=1)
         self._bg_file = None
-        self._qr_group = None
-        self.splash.append(self._bg_group)
         self.set_background(default_bg)
+        self.splash.append(self._bg_group)
+
+        self._qr_group = None
+
+        if self._debug:
+            print("Init caption")
+        self._caption=None
+        if caption_font:
+            self._caption_font = bitmap_font.load_font(caption_font)
+        self.set_caption(caption_text, caption_position, caption_color)
+
 
         if text_font:
             if isinstance(text_position[0], tuple) or isinstance(text_position[0], list):
@@ -172,6 +196,25 @@ class PyPortal:
         val = max(0, min(1.0, val))
         self._backlight.duty_cycle = int(val * 65535)
 
+    def set_caption(self, caption_text, caption_position, caption_color):
+        if self._debug:
+            print("Setting caption to", caption_text)
+
+        if (not caption_text) or (not self._caption_font) or (not caption_position):
+            return  # nothing to do!
+
+        if self._caption:
+            self._caption._update_text(str(val))
+            board.DISPLAY.refresh_soon()
+            board.DISPLAY.wait_for_frame()
+            return
+
+        self._caption = TextArea(self._caption_font, text=str(caption_text))
+        self._caption.x = caption_position[0]
+        self._caption.y = caption_position[1]
+        self._caption.color = caption_color
+        self.splash.append(self._caption.group)
+
     def set_text(self, val, index=0):
         if self._text_font:
             if self._text[index]:
@@ -184,7 +227,6 @@ class PyPortal:
             self._text[index].x = self._text_position[index][0]
             self._text[index].y = self._text_position[index][1]
             self.splash.append(self._text[index].group)
-            board.DISPLAY.wait_for_frame()
 
     def neo_status(self, value):
         if self.neopix:
@@ -235,19 +277,24 @@ class PyPortal:
         if self._debug:
             print("Free mem: ", gc.mem_free())
 
-        self.neo_status((0, 0, 100))
-        while not self._esp.is_connected:
-            if self._debug:
-                print("Connecting to AP")
-            # settings dictionary must contain 'ssid' and 'password' at a minimum
-            self.neo_status((100, 0, 0)) # red = not connected
-            self._esp.connect(settings)
-        # great, lets get the data
-        print("Retrieving data...", end='')
-        self.neo_status((100, 100, 0))   # yellow = fetching data
-        r = requests.get(self._url)
-        self.neo_status((0, 0, 100))   # green = got data
-        print("Reply is OK!")
+        r = None
+        if os.stat(LOCALFILE):
+            print("*** USING LOCALFILE FOR DATA - NOT INTERNET!!! ***")
+            r = fake_requests(LOCALFILE)
+        else:
+            self.neo_status((0, 0, 100))
+            while not self._esp.is_connected:
+                if self._debug:
+                    print("Connecting to AP")
+                # settings dictionary must contain 'ssid' and 'password' at a minimum
+                self.neo_status((100, 0, 0)) # red = not connected
+                self._esp.connect(settings)
+            # great, lets get the data
+            print("Retrieving data...", end='')
+            self.neo_status((100, 100, 0))   # yellow = fetching data
+            r = requests.get(self._url)
+            self.neo_status((0, 0, 100))   # green = got data
+            print("Reply is OK!")
 
         if self._debug:
             print(r.text)
