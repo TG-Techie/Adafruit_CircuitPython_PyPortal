@@ -30,7 +30,7 @@ class PyPortal:
                  text_font=None, text_position=None, text_color=0x808080, text_wrap=0,
                  image_json_path=None, image_resize=None, image_position=None,
                  time_between_requests=60, success_callback=None,
-                 debug=False):
+                 debug=True):
 
         self._debug = debug
 
@@ -68,7 +68,7 @@ class PyPortal:
         esp32_reset = DigitalInOut(microcontroller.pin.PB17)
         spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
         self._esp = adafruit_esp32spi.ESP_SPIcontrol(spi, esp32_cs, esp32_ready, esp32_reset, esp32_gpio0)
-
+        #self._esp._debug = 1
         for _ in range(3): # retries
             try:
                 print("ESP firmware:", self._esp.firmware_version)
@@ -95,6 +95,8 @@ class PyPortal:
         if text_font:
             if isinstance(text_position[0], tuple) or isinstance(text_position[0], list):
                 num = len(text_position)
+                if not text_wrap:
+                    text_wrap = [0] * num
             else:
                 num = 1
                 text_position = (text_position,)
@@ -103,11 +105,13 @@ class PyPortal:
             self._text = [None] * num
             self._text_color = [None] * num
             self._text_position = [None] * num
-            self._text_wrap = [0] * num
+            self._text_wrap = [None] * num
             self._text_font = bitmap_font.load_font(text_font)
             if self._debug:
                 print("Loading font glyphs")
-            self._text_font.load_glyphs(b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789:/-_,. ')
+            #self._text_font.load_glyphs(b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789:/-_,. ')
+            gc.collect()
+
             for i in range(num):
                 if self._debug:
                     print("Init text area", i)
@@ -138,6 +142,7 @@ class PyPortal:
                                                    size=(320, 240))
 
         self.set_backlight(1.0)  # turn on backlight
+        gc.collect()
 
     def set_background(self, filename):
         try:
@@ -227,6 +232,8 @@ class PyPortal:
 
     def fetch(self):
         gc.collect()
+        if self._debug:
+            print("Free mem: ", gc.mem_free())
 
         self.neo_status((0, 0, 100))
         while not self._esp.is_connected:
