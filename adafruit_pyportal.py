@@ -273,16 +273,15 @@ class PyPortal:
     def wget(self, url, filename):
         print("Fetching stream from", url)
         r = requests.get(url, stream=True)
-        #esp._debug = True
 
         if self._debug:
             print(r.headers)
         content_length = int(r.headers['content-length'])
         remaining = content_length
         print("Saving data to ", filename)
-
+        stamp = time.monotonic()
         with open(filename, "wb") as f:
-            for i in r.iter_content(min(remaining,1500)):
+            for i in r.iter_content(min(remaining, 12000)):  # huge chunks!
                 remaining -= len(i)
                 f.write(i)
                 if self._debug:
@@ -292,7 +291,8 @@ class PyPortal:
                 if not remaining:
                     break
         r.close()
-        print("Created file of %d bytes" % os.stat(filename)[6])
+        stamp = time.monotonic() - stamp
+        print("Created file of %d bytes in %0.1f seconds" % (os.stat(filename)[6], stamp))
 
     def fetch(self):
         gc.collect()
