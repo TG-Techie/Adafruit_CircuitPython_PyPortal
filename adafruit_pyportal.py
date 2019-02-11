@@ -37,7 +37,8 @@ class fake_requests:
 class PyPortal:
     def __init__(self, *, url, json_path=None, xml_path=None,
                  default_bg=None, status_neopixel=None,
-                 text_font=None, text_position=None, text_color=0x808080, text_wrap=0,
+                 text_font=None, text_position=None, text_color=0x808080,
+                 text_wrap=0, text_maxlen=0,
                  image_json_path=None, image_resize=None, image_position=None,
                  time_between_requests=60, success_callback=None,
                  caption_text=None, caption_font=None, caption_position=None,
@@ -121,6 +122,8 @@ class PyPortal:
                 num = len(text_position)
                 if not text_wrap:
                     text_wrap = [0] * num
+                if not text_maxlen:
+                    text_maxlen = [0] * num
             else:
                 num = 1
                 text_position = (text_position,)
@@ -130,6 +133,7 @@ class PyPortal:
             self._text_color = [None] * num
             self._text_position = [None] * num
             self._text_wrap = [None] * num
+            self._text_maxlen = [None] * num
             self._text_font = bitmap_font.load_font(text_font)
             if self._debug:
                 print("Loading font glyphs")
@@ -143,6 +147,7 @@ class PyPortal:
                 self._text_color[i] = text_color[i]
                 self._text_position[i] = text_position[i]
                 self._text_wrap[i] = text_wrap[i]
+                self._text_maxlen[i] = text_maxlen[i]
         else:
             self._text_font = None
             self._text = None
@@ -217,12 +222,29 @@ class PyPortal:
 
     def set_text(self, val, index=0):
         if self._text_font:
+            string = str(val)
+            if self._text_maxlen[index]:
+                string = string[:self._text_maxlen[index]]
             if self._text[index]:
-                self._text[index]._update_text(str(val))
-                board.DISPLAY.refresh_soon()
-                board.DISPLAY.wait_for_frame()
+                # TODO: repalce this with a simple set_text() once that works well
+                items = []
+                while True:
+                    try:
+                        item = self.splash.pop()
+                        if item == self._text[index].group:
+                            break
+                        items.append(item)
+                    except IndexError:
+                        break
+                self._text[index] = TextArea(self._text_font, text=string)
+                self._text[index].color = self._text_color[index]
+                self._text[index].x = self._text_position[index][0]
+                self._text[index].y = self._text_position[index][1]
+                self.splash.append(self._text[index].group)
+                for g in items:
+                    self.splash.append(g)
                 return
-            self._text[index] = TextArea(self._text_font, text=str(val))
+            self._text[index] = TextArea(self._text_font, text=string)
             self._text[index].color = self._text_color[index]
             self._text[index].x = self._text_position[index][0]
             self._text[index].y = self._text_position[index][1]
@@ -278,10 +300,14 @@ class PyPortal:
             print("Free mem: ", gc.mem_free())
 
         r = None
-        if os.stat(LOCALFILE):
+        try:
+            os.stat(LOCALFILE)
             print("*** USING LOCALFILE FOR DATA - NOT INTERNET!!! ***")
             r = fake_requests(LOCALFILE)
-        else:
+        except OSError:
+            pass
+
+        if not r:
             self.neo_status((0, 0, 100))
             while not self._esp.is_connected:
                 if self._debug:
