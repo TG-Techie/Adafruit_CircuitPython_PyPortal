@@ -20,7 +20,8 @@ import adafruit_esp32spi.adafruit_esp32spi_requests as requests
 try:
     from settings import settings
 except ImportError:
-    print("WiFi settings are kept in settings.py, please add them there!")
+    print("""WiFi settings are kept in settings.py, please add them there!
+the settings dictionary must contain 'ssid' and 'password' at a minimum""")
     raise
 
 IMAGE_CONVERTER_SERVICE = "https://res.cloudinary.com/schmarty/image/fetch/w_320,h_240,c_fill,f_bmp/"
