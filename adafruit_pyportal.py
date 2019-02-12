@@ -130,6 +130,7 @@ class PyPortal:
                 text_position = (text_position,)
                 text_color = (text_color,)
                 text_wrap = (text_wrap,)
+                text_maxlen = (text_maxlen,)
             self._text = [None] * num
             self._text_color = [None] * num
             self._text_position = [None] * num
