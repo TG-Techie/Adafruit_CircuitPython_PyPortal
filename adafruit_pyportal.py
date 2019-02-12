@@ -23,6 +23,7 @@ except ImportError:
     raise
 
 IMAGE_CONVERTER_SERVICE = "https://res.cloudinary.com/schmarty/image/fetch/w_320,h_240,c_fill,f_bmp/"
+#IMAGE_CONVERTER_SERVICE = "http://ec2-107-23-37-170.compute-1.amazonaws.com/rx/ofmt_bmp,rz_320x240/"
 LOCALFILE = "local.txt"
 
 class fake_requests:
@@ -157,7 +158,7 @@ class PyPortal:
         self._image_position = image_position
         if image_json_path:
             if self._debug:
-                print("Init image path", i)
+                print("Init image path")
             if not self._image_position:
                 self._image_position = (0, 0)  # default to top corner
             if not self._image_resize:
@@ -244,11 +245,12 @@ class PyPortal:
                 for g in items:
                     self.splash.append(g)
                 return
-            self._text[index] = TextArea(self._text_font, text=string)
-            self._text[index].color = self._text_color[index]
-            self._text[index].x = self._text_position[index][0]
-            self._text[index].y = self._text_position[index][1]
-            self.splash.append(self._text[index].group)
+            if self._text_position[index]:  # if we want it placed somewhere...
+                self._text[index] = TextArea(self._text_font, text=string)
+                self._text[index].color = self._text_color[index]
+                self._text[index].x = self._text_position[index][0]
+                self._text[index].y = self._text_position[index][1]
+                self.splash.append(self._text[index].group)
 
     def neo_status(self, value):
         if self.neopix:
@@ -272,6 +274,8 @@ class PyPortal:
 
     def wget(self, url, filename):
         print("Fetching stream from", url)
+
+        self.neo_status((100, 100, 0))
         r = requests.get(url, stream=True)
 
         if self._debug:
@@ -282,6 +286,7 @@ class PyPortal:
         stamp = time.monotonic()
         with open(filename, "wb") as f:
             for i in r.iter_content(min(remaining, 12000)):  # huge chunks!
+                self.neo_status((0, 100, 100))
                 remaining -= len(i)
                 f.write(i)
                 if self._debug:
@@ -290,9 +295,12 @@ class PyPortal:
                     print(".", end='')
                 if not remaining:
                     break
+                self.neo_status((100, 100, 0))
+
         r.close()
         stamp = time.monotonic() - stamp
         print("Created file of %d bytes in %0.1f seconds" % (os.stat(filename)[6], stamp))
+        self.neo_status((0, 0, 0))
 
     def fetch(self):
         gc.collect()
@@ -339,7 +347,7 @@ class PyPortal:
             for path in self._json_path:
                 values.append(self._json_pather(json_out, path))
         else:
-            values = r.text()
+            values = r.text
 
         image = None
         if self._image_json_path:
