@@ -1,5 +1,6 @@
 import os
 import gc
+import supervisor
 import time
 import board
 import busio
@@ -176,6 +177,7 @@ class PyPortal:
         gc.collect()
 
     def set_background(self, filename):
+        print("Set background to ", filename)
         try:
             self._bg_group.pop()
         except IndexError:
@@ -183,7 +185,6 @@ class PyPortal:
 
         if not filename:
             return # we're done, no background desired
-        print("Set background to ", filename)
         if self._bg_file:
             self._bg_file.close()
         self._bg_file = open(filename, "rb")
@@ -195,6 +196,7 @@ class PyPortal:
 
         self._bg_group.append(self._bg_sprite)
         board.DISPLAY.refresh_soon()
+        gc.collect()
         board.DISPLAY.wait_for_frame()
 
     def set_backlight(self, val):
@@ -271,6 +273,7 @@ class PyPortal:
         value = json
         for x in path:
             value = value[x]
+            gc.collect()
         return value
 
     def wget(self, url, filename):
@@ -304,6 +307,10 @@ class PyPortal:
         self.neo_status((0, 0, 0))
 
     def fetch(self):
+        json_out = None
+        image_url = None
+        values = []
+
         gc.collect()
         if self._debug:
             print("Free mem: ", gc.mem_free())
@@ -327,34 +334,57 @@ class PyPortal:
             # great, lets get the data
             print("Retrieving data...", end='')
             self.neo_status((100, 100, 0))   # yellow = fetching data
+            gc.collect()
             r = requests.get(self._url)
+            gc.collect()
             self.neo_status((0, 0, 100))   # green = got data
             print("Reply is OK!")
 
         if self._debug:
             print(r.text)
 
-        json_out = None
+
         if self._image_json_path or self._json_path:
             try:
+                gc.collect()
                 json_out = r.json()
+                gc.collect()
             except ValueError:            # failed to parse?
                 print("Couldn't parse json: ", r.text)
                 raise
+            except MemoryError:
+                supervisor.reload()
+
+        if self._xml_path:
+            try:
+                import xmltok
+                print("*"*40)
+                tokens = []
+                for i in xmltok.tokenize(r.text):
+                    print(i)
+                print(tokens)
+                print("*"*40)
+            except ValueError:            # failed to parse?
+                print("Couldn't parse XML: ", r.text)
+                raise
+
 
         # extract desired text/values from json
-        values = []
         if self._json_path:
             for path in self._json_path:
                 values.append(self._json_pather(json_out, path))
         else:
             values = r.text
 
-        image = None
         if self._image_json_path:
             image_url = self._json_pather(json_out, self._image_json_path)
-            # TERRIBLE HACK FOR FIXING MICROSERVICE
-            image_url = image_url.replace("https://cdn-shop.adafruit.com/320x240", "https://cdn-shop.adafruit.com/640x480")
+
+        # we're done with the requests object, lets delete it so we can do more!
+        json_out = None
+        r = None
+        gc.collect()
+
+        if image_url:
             print("original URL:", image_url)
             image_url = IMAGE_CONVERTER_SERVICE+image_url
             print("convert URL:", image_url)
@@ -362,12 +392,12 @@ class PyPortal:
             #print("**not actually wgetting**")
             self.wget(image_url, "/cache.bmp")
             self.set_background("/cache.bmp")
+            image_url = None
+            gc.collect()
 
         # if we have a callback registered, call it now
         if self._success_callback:
             self._success_callback(values)
-
-        gc.collect()
 
         # fill out all the text blocks
         if self._text:
